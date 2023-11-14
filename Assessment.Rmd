@@ -1,0 +1,314 @@
+---
+title: "World Bank Assessment - STC Position"
+author: Baqir Fateh
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+format: html
+editor: visual
+---
+
+```{r}
+#| label: load-packages and download the raw data
+#| meeage: false
+#| warning: false
+library(tidyverse)
+library(Hmisc)
+library(waldo)
+library(matrixStats) # I used this package to calucate the weighted median 
+library(DT)
+#### Set up the Url to download the raw data 
+tag      <- "202311081903"
+base_url <- "https://github.com/randrescastaneda/pub_data/raw/"
+data_url <- paste0(base_url, tag, "/data/Rtest1/")
+
+## Download the raw data set for taks 1-3
+wdi <- readr::read_rds(paste0(data_url, "wdi_in1.Rds"))
+```
+
+### 1. Summary statistics of GDP per capita by region
+
+The replicated results in this task are almost identical to the original results.
+
+```{r}
+#| warning: false
+############################################################
+### 1. Summary statistics of GDP per capita by region      #
+############################################################
+q1_rep <- wdi%>%
+  group_by(region, date)%>%
+  summarise(N = n(), Mean = weighted.mean(gdp, pop, na.rm = TRUE),
+            SD = sqrt(wtd.var(gdp, pop,na.rm = TRUE)),
+            Min = min(gdp, na.rm = TRUE), Max = max(gdp, na.rm = TRUE))%>%
+  rename(year = date)%>%
+  as.data.frame()
+
+## Display the output 
+datatable(q1_rep, options = list(pageLength = 10), filter = "top")
+```
+
+### 2. Aggregate stats
+
+The replicated results in this task are pretty close to the original outputs except for the median. I tried to estimate the weighted median using an existing function, but the estimates are off.
+
+```{r}
+#| warning: false
+############################################
+### 2. Aggregate stats                     #     
+############################################
+# List the relevant variables
+vars <- c("lifeex", "gdp", "pov_intl")
+
+# Initialize a list to store the results 
+result <- list()
+
+## Loop over the selected variables 
+for (var in vars){
+ q2_rep <- wdi%>%
+    group_by(region, date)%>%
+    summarise(mean = weighted.mean(!!sym(var), pop, na.rm = TRUE),
+              sd = sqrt(wtd.var(!!sym(var), pop,na.rm = TRUE)),
+              median = weightedMedian(!!sym(var), pop),
+              pop = sum(pop, na.rm = TRUE),
+              min = min(!!sym(var), na.rm = TRUE), 
+              max = max(!!sym(var), na.rm = TRUE))%>%
+    gather("estimate", !!var, -c(pop, region, date))
+ result[[var]] <- q2_rep
+}
+
+## Combine the outputs to generate the final tables 
+q2_rep <- Reduce(function(x, y) merge(x, y, by = c("region", "date", "estimate", "pop"), 
+                                      all = TRUE), result)%>%
+  as.data.frame()
+
+## Display the output 
+datatable(q2_rep, options = list(pageLength = 10), filter = "top")
+
+## Download the answer table
+#wdi_agg_out <- readr::read_rds(paste0(data_url, "wdi_agg_out.Rds"))%>%
+  #as.data.frame()
+
+```
+
+### 3. Find outliers
+
+The replicated results are pretty close to the original outputs.
+
+```{r}
+############################################
+### 3. Find outliers                       #
+############################################
+
+q3_rep <- wdi%>%
+  group_by(date)%>%
+  mutate(mean_lifeex = weighted.mean(lifeex, pop, na.rm = TRUE),
+         sd_lifeex = sqrt(wtd.var(lifeex, pop, na.rm = TRUE)),
+         hl_lifeex = lifeex > mean_lifeex+2.5*sd_lifeex,
+         ll_lifeex = lifeex < mean_lifeex-2.5*sd_lifeex)%>%
+  mutate(mean_gdp = weighted.mean(gdp, pop, na.rm = TRUE),
+         sd_gdp = sqrt(wtd.var(gdp, pop, na.rm = TRUE)),
+         hl_gdp = gdp > mean_gdp+2.5*sd_gdp,
+         ll_gdp = gdp < mean_gdp-2.5*sd_gdp)%>%
+  mutate(mean_gini = weighted.mean(gini, pop, na.rm = TRUE),
+         sd_gini = sqrt(wtd.var(gini, pop, na.rm = TRUE)),
+         hl_gini = gini > mean_gini+2.5*sd_gini,
+         ll_gini = gini < mean_gini-2.5*sd_gini)
+
+## Display the output 
+datatable(q3_rep, options = list(pageLength = 10), filter = "top")
+
+## Visualize life-expectancy by year
+q3_rep%>%
+  group_by(date)%>%
+  ggplot(aes(date,lifeex, mean_lifeex, col = region))+
+  geom_point()+
+  geom_line(aes(date, mean_lifeex), col = "blue", size = 0.7)+
+  geom_ribbon(aes( ymin = mean_lifeex-2.5*sd_lifeex, ymax = mean_lifeex+2.5*sd_lifeex), 
+              fill = "grey", color = NA, alpha = 0.6)+
+  theme_minimal()+
+  theme(legend.position = c(0.5, 0.16))+
+  theme(legend.title = element_blank())+
+  guides(color = guide_legend(ncol = 4, byrow = TRUE))
+  
+```
+
+### 4. Poverty Measure
+
+The replicated results are almost identical to the original outputs.
+
+```{r}
+#######################################
+### 4. Poverty Measure                #
+#######################################
+## Read the raw data from github 
+l_svy <- readr::read_rds(paste0(data_url, "svy_sim_in1.Rds"))
+
+### Convert the list into a data frame 
+## Add a year column
+l_svy <- lapply(names(l_svy), function(year) {
+  df <- l_svy[[year]]
+  df$year <- year
+  return(df)
+})
+
+## combine by row
+sim_data <- do.call(rbind, l_svy)%>%
+  mutate(year = str_sub(year,2,5))%>%
+  as.data.frame()
+
+## The setup of the output file 
+# Poverty lines 
+pov_lines <- c(2.15, 3.65, 6.85)
+
+## Initialize a data frame to store the results
+q4_rep <- expand.grid(year = unique(sim_data$year), pov_line = pov_lines)
+q4_rep <- q4_rep%>%
+  mutate(headcount = NA, povgap = NA, povseverity = NA)
+
+## Write a customized function to compute the poverty indices 
+pov_func <- function(income, pov_line, w, alpha){
+  data <- data.frame(income, pov_line, w)
+  data <- data%>%
+    mutate(diff = ifelse(income < pov_line,((pov_line-income)/pov_line),0),
+           pov_ind = ifelse(income < pov_line, diff^alpha,0))%>%
+    summarise(pov_ind = sum(pov_ind*w),
+              total_weight = sum(w))
+  data$pov_ind/data$total_weight
+}
+## Compute poverty headcount, poverty gap, and poverty severity 
+for (i in 1:nrow(q4_rep)){
+  reduced_data <- sim_data%>%filter(year == q4_rep$year[i])
+  q4_rep$headcount[i] <- pov_func(reduced_data$income, 
+                                  pov_line = q4_rep$pov_line[i], 
+                                  w = reduced_data$weight,alpha = 0)
+  q4_rep$povgap[i] <- pov_func(reduced_data$income, 
+                               pov_line = q4_rep$pov_line[i], 
+                               w = reduced_data$weight,alpha = 1)
+  q4_rep$povseverity[i] <- pov_func(reduced_data$income, 
+                                    pov_line = q4_rep$pov_line[i], 
+                                    w = reduced_data$weight,alpha = 2)
+}
+
+## Display the output 
+datatable(q4_rep, options = list(pageLength = 10), filter = "top")
+
+## Visualize the head count against year
+q4_rep%>%
+  ggplot(aes(year, headcount, group = pov_line, color = as.factor(pov_line)))+
+  geom_line()+
+  geom_point() +
+  theme_minimal() +
+  theme(legend.title = element_blank())+
+  theme(legend.position = "bottom")
+
+```
+
+### 5. Lorenz curve
+
+The replicated results in this task are different from the original output. However, the graph looks pretty similar.
+
+```{r}
+#######################################     
+### 5. Lorenz curve                   #
+#######################################
+# Write a function 
+lorenz_curve <- function(x){
+  # Set up an empty data frame
+  q5_rep <- data.frame(
+    welfare = numeric(0),
+    cum_welfare = numeric(0),
+    cum_population = numeric(0),
+    year = integer(0),
+    bin = integer(0)
+  )
+  # Unique number of years 
+  years <- unique(x$year)
+  # Looping over each year
+  for (i in seq_along(years)){
+    yrs <- years[i]
+    temp_out <- x %>%
+      filter(year == yrs) %>%
+      arrange(income) %>%
+      mutate(cum_welfare_w = cumsum(income * weight),
+             cum_weight = cumsum(weight)) %>%
+      # Normalizing the cumulative share of income and population
+      mutate(cum_welfare = cum_welfare_w / sum(income * weight),
+             cum_population = cum_weight / sum(weight))%>%
+      select(-c(income, area, weight))
+    # Creating percentiles 
+    percentiles <- seq(0, 1, length.out = 100)
+    # Calculating the cumulative welfare for each percentile 
+    cum_welfare_percent <- approx(temp_out$cum_population, temp_out$cum_welfare, percentiles)$y
+    # Calculating the welfare for each percentile 
+    welfare_percent <- approx(temp_out$cum_population, temp_out$cum_welfare_w, percentiles)$y
+    # Creating a another temporary data frame to update the values of variables created in the temp_out 
+    aux_out_table <- data.frame(
+      welfare = welfare_percent,        
+      cum_welfare = cum_welfare_percent,    
+      cum_population = percentiles,     
+      year = rep(yrs, length(percentiles)),    
+      bin = seq(1, 100)                 
+    )
+    # Creating the final output table
+    q5_rep <- rbind(q5_rep, aux_out_table)
+  } 
+  # Return the output table
+  return(q5_rep)
+}
+
+q5_rep <- lorenz_curve(sim_data)
+
+## Display the output 
+datatable(q5_rep, options = list(pageLength = 10), filter = "top")
+
+### Visualize the cumulative share of income against the cumulative share of population 
+q5_rep%>%
+  ggplot(aes(cum_population, cum_welfare, group = year, color = as.factor(year)))+
+  geom_line()+
+  theme_minimal() +
+  theme(legend.title = element_blank())+
+  theme(legend.position = c(0.1, 0.55))
+
+```
+
+### 6. Estimating Gini Coefficient
+
+The replicated results are almost identical to the original outputs.
+
+```{r}
+##########################################
+### 6. Estimating Gini Coefficient       #
+##########################################
+
+## Write function that estimate Gini coefficient for each year
+gini_func <- function(x) {
+  # Create an empty data frame to store the estimates
+  q6_rep <- data.frame(year = integer(), gini = numeric())
+  ## loop over the year 
+  for (yr in unique(x$year)) {
+    # Prepare the data for estimating the Gini coefficient
+    gini_data <- x %>%
+      filter(year == yr) %>%
+      arrange(income) %>%
+      mutate(cum_weight = cumsum(weight / sum(weight)),
+             cum_income = cumsum(income * weight / sum(income * weight)))
+    # Compute the Gini coefficient
+    G <- 1 - sum(2 * diff(c(0, gini_data$cum_weight)) * c(0, head(gini_data$cum_income, -1)))
+    # Store the yearly estimate of the Gini coefficient
+    q6_rep <- rbind(q6_rep, data.frame(year = yr, gini = G))
+  }
+  return(q6_rep)
+}
+
+## Generate the Gini coefficient by year 
+q6_rep <- gini_func(sim_data)
+
+## Display the output 
+datatable(q6_rep, options = list(pageLength = 10), filter = "top")
+
+## Visualize the estimates of Gini Coefficient by year 
+q6_rep%>%
+  ggplot(aes(year, gini, group = FALSE))+
+  geom_line()+
+  geom_point()+
+  theme_minimal() 
+
+```
