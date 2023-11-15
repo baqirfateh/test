@@ -1,5 +1,7 @@
 project:
   title: "stc_assessment"
+  type: website
+  output-dir: docs 
 
 
 
