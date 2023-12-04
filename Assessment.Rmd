@@ -1,5 +1,4 @@
 ---
-title: "World Bank Assessment - STC Position"
 author: Baqir Fateh
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 format: html
